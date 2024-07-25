@@ -102,11 +102,21 @@ private:
 	// Pipelines
 	VkPipeline _grid_pipeline;
 	VkPipelineLayout _grid_pipeline_layout;
+	
+	VkPipeline _voxel_pipeline;
+	VkPipelineLayout _voxel_pipeline_layout;
 
 	// Immediate Submit Structures
 	VkFence _imm_fence;
 	VkCommandBuffer _imm_command_buffer;
 	VkCommandPool _imm_command_pool;
+
+	// Buffer
+	AllocatedBuffer create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage);
+
+	void destroy_buffer(const AllocatedBuffer& buffer);
+
+	GPUMeshBuffers upload_mesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
 
 	// Initialization functions
 	void init_vulkan();
@@ -122,8 +132,6 @@ private:
 	void init_descriptors();
 
 	void init_pipelines();
-	void init_grid_pipeline();
-	void init_example_compute_pipelines();
 
 	void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
 
@@ -131,6 +139,17 @@ private:
 	void render();
 	void render_background(VkCommandBuffer cmd);
 	void render_geometry(VkCommandBuffer cmd);
+
+	// Temp
+	VkPipelineLayout _mesh_pipeline_layout;
+	VkPipeline _mesh_pipeline;
+
+	GPUMeshBuffers rectangle;
+
+	void init_mesh_pipeline();
+
+	void init_data();
+
 };
 
 
