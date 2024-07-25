@@ -34,7 +34,7 @@ constexpr bool use_validation_layers_ = true;
 
 Engine::Engine()
 {
-    fmt::print("\033[1;38;5;208m[ Initializing... ]\033[0m\n");
+    fmt::print(fg(fmt::color::orange) | fmt::emphasis::bold, "[ Initializing ]\n");
 
     // We initialize SDL and create a window with it. 
     SDL_Init(SDL_INIT_VIDEO);
@@ -67,7 +67,7 @@ Engine::Engine()
 
 Engine::~Engine()
 {
-    fmt::print("\033[1;38;5;208m[ Cleaning up... ]\033[0m\n");
+    fmt::print(fg(fmt::color::orange) | fmt::emphasis::bold, "[ Cleaning Up ]\n");
 
     if (_is_initialized) {
 
@@ -352,18 +352,18 @@ void Engine::init_grid_pipeline()
 {
     VkShaderModule grid_frag_shader;
     if (!vkutil::load_shader_module("../../shaders/colored_triangle.frag.spv", _device, &grid_frag_shader)) {
-        fmt::print("Error when building the grid fragment shader module\n");
+        fmt::print(fg(fmt::color::red), "Error when building the grid fragment shader module\n");
     }
     else {
-        fmt::print("Grid fragment shader succesfully loaded\n");
+        fmt::print(fg(fmt::color::green), "Grid fragment shader successfully loaded\n");
     }
 
     VkShaderModule grid_vert_shader;
     if (!vkutil::load_shader_module("../../shaders/colored_triangle.vert.spv", _device, &grid_vert_shader)) {
-        fmt::print("Error when building the grid vertex shader module\n");
+        fmt::print(fg(fmt::color::red), "Error when building the grid vertex shader module\n");
     }
     else {
-        fmt::print("Grid vertex shader succesfully loaded\n");
+        fmt::print(fg(fmt::color::green), "Grid vertex shader successfully loaded\n");
     }
 
     VkPipelineLayoutCreateInfo pipeline_layout_info = vkinit::pipeline_layout_create_info();
@@ -608,7 +608,7 @@ void Engine::render_geometry(VkCommandBuffer cmd)
 
 void Engine::run()
 {
-    fmt::print("\033[1;38;5;208m[ Running... ]\033[0m\n");
+    fmt::print(fg(fmt::color::orange) | fmt::emphasis::bold, "[ Running ]\n");
 
     SDL_Event e;
     bool quit = false;

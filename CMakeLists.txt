@@ -4,7 +4,7 @@ project("Voxel")
 set(CMAKE_CXX_STANDARD 20)
 find_package(Vulkan REQUIRED)
 
-add_subdirectory(lib)
+add_subdirectory(third_party)
 
 set (CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/bin")
 set (CMAKE_LIBRARY_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/bin")
