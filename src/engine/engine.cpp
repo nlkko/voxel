@@ -347,10 +347,11 @@ void Engine::init_pipelines()
     init_grid_pipeline();
 }
 
+
 void Engine::init_grid_pipeline()
 {
     VkShaderModule grid_frag_shader;
-    if (!vkutil::load_shader_module("../../shaders/grid.frag.spv", _device, &grid_frag_shader)) {
+    if (!vkutil::load_shader_module("../../shaders/colored_triangle.frag.spv", _device, &grid_frag_shader)) {
         fmt::print("Error when building the grid fragment shader module\n");
     }
     else {
@@ -358,7 +359,7 @@ void Engine::init_grid_pipeline()
     }
 
     VkShaderModule grid_vert_shader;
-    if (!vkutil::load_shader_module("../../shaders/grid.vert.spv", _device, &grid_vert_shader)) {
+    if (!vkutil::load_shader_module("../../shaders/colored_triangle.vert.spv", _device, &grid_vert_shader)) {
         fmt::print("Error when building the grid vertex shader module\n");
     }
     else {
@@ -367,11 +368,47 @@ void Engine::init_grid_pipeline()
 
     VkPipelineLayoutCreateInfo pipeline_layout_info = vkinit::pipeline_layout_create_info();
     VK_CHECK(vkCreatePipelineLayout(_device, &pipeline_layout_info, nullptr, &_grid_pipeline_layout));
+
+    PipelineBuilder pipelineBuilder;
+
+    //use the triangle layout we created
+    pipelineBuilder._pipeline_layout = _grid_pipeline_layout;
+    //connecting the vertex and pixel shaders to the pipeline
+    pipelineBuilder.set_shaders(grid_vert_shader, grid_frag_shader, "main");
+    //it will draw triangles
+    pipelineBuilder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    //filled triangles
+    pipelineBuilder.set_polygon_mode(VK_POLYGON_MODE_FILL);
+    //no backface culling
+    pipelineBuilder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE);
+    //no multisampling
+    pipelineBuilder.set_multisampling_none();
+    //no blending
+    pipelineBuilder.disable_blending();
+    //no depth testing
+    pipelineBuilder.disable_depthtest();
+
+    //connect the image format we will draw into, from draw image
+    pipelineBuilder.set_color_attachment_format(_draw_image.image_format);
+    pipelineBuilder.set_depth_format(VK_FORMAT_UNDEFINED);
+
+    //finally build the pipeline
+    _grid_pipeline = pipelineBuilder.build_pipeline(_device);
+
+    //clean structures
+    vkDestroyShaderModule(_device, grid_frag_shader, nullptr);
+    vkDestroyShaderModule(_device, grid_vert_shader, nullptr);
+
+    _main_deletion_queue.push_function([&]() {
+        vkDestroyPipelineLayout(_device, _grid_pipeline_layout, nullptr);
+        vkDestroyPipeline(_device, _grid_pipeline, nullptr);
+        });
 }
+
 
 void Engine::init_example_compute_pipelines()
 {
-    // create layour
+    // create layout
     VkPipelineLayoutCreateInfo compute_layout{};
     compute_layout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     compute_layout.pNext = nullptr;
@@ -383,7 +420,7 @@ void Engine::init_example_compute_pipelines()
     // shader
     VkShaderModule compute_draw_shader;
 
-    if (!vkutil::load_shader_module("../../shaders/gradient.comp.spv", _device, &compute_draw_shader))
+    if (!vkutil::load_shader_module("../../shaders/sky.comp.spv", _device, &compute_draw_shader))
     {
         fmt::print("Error when building the compute shader \n");
     }
@@ -465,10 +502,15 @@ void Engine::render()
     // transition swapchain image format
     vkutil::transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
-    render_scene(cmd);
+    render_background(cmd);
+
+    vkutil::transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+    render_geometry(cmd);
+
 
     // transition the draw image and the swapchain image into their correct transfer layouts
-    vkutil::transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    vkutil::transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     vkutil::transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
     // copy draw image to swapchain image
@@ -507,17 +549,17 @@ void Engine::render()
     _frame_number++;
 }
 
-void Engine::render_scene(VkCommandBuffer cmd)
+void Engine::render_background(VkCommandBuffer cmd)
 {
     // make a clear-color from frame number. This will flash with a 120 frame period.
-    /*
     VkClearColorValue clear_value = { 0.082f, 0.184f, 0.31f, 1.0f };
 
     VkImageSubresourceRange clear_range = vkinit::image_subresource_range(VK_IMAGE_ASPECT_COLOR_BIT);
 
     vkCmdClearColorImage(cmd, _draw_image.image, VK_IMAGE_LAYOUT_GENERAL, &clear_value, 1, &clear_range);
-    */
+    
 
+    /*
     // bind the gradient drawing compute pipeline
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _grid_pipeline);
 
@@ -526,6 +568,42 @@ void Engine::render_scene(VkCommandBuffer cmd)
 
     // execute the compute pipeline dispatch. We are using 16x16 workgroup size so we need to divide by it
     vkCmdDispatch(cmd, std::ceil(_draw_extent.width / 16.0), std::ceil(_draw_extent.height / 16.0), 1);
+    */
+}
+
+void Engine::render_geometry(VkCommandBuffer cmd)
+{
+    //begin a render pass  connected to our draw image
+    VkRenderingAttachmentInfo color_attachment = vkinit::attachment_info(_draw_image.image_view, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    
+    VkRenderingInfo render_info = vkinit::rendering_info(_draw_extent, &color_attachment, nullptr);
+    vkCmdBeginRendering(cmd, &render_info);
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _grid_pipeline);
+    
+    //set dynamic viewport and scissor
+    VkViewport viewport = {};
+    viewport.x = 0;
+    viewport.y = 0;
+    viewport.width = _draw_extent.width;
+    viewport.height = _draw_extent.height;
+    viewport.minDepth = 0.f;
+    viewport.maxDepth = 1.f;
+
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+    VkRect2D scissor = {};
+    scissor.offset.x = 0;
+    scissor.offset.y = 0;
+    scissor.extent.width = _draw_extent.width;
+    scissor.extent.height = _draw_extent.height;
+
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    //launch a draw command to draw 3 vertices
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+
+    vkCmdEndRendering(cmd);
 }
 
 void Engine::run()

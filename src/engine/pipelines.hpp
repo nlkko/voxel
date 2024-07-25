@@ -5,7 +5,8 @@ namespace vkutil
 	bool load_shader_module(const char* file_path, VkDevice device, VkShaderModule* out_shader_module);
 }
 
-class PipelineBuilder {
+class PipelineBuilder
+{
 public:
     std::vector<VkPipelineShaderStageCreateInfo> _shader_stages;
 
@@ -32,4 +33,7 @@ public:
     void set_color_attachment_format(VkFormat format);
     void set_depth_format(VkFormat format);
     void disable_depthtest();
-}
+
+private:
+
+};

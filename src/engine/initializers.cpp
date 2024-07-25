@@ -182,3 +182,54 @@ VkPipelineShaderStageCreateInfo vkinit::pipeline_shader_stage_create_info(VkShad
     info.pName = entry;
     return info;
 }
+
+VkRenderingAttachmentInfo vkinit::attachment_info(
+    VkImageView view, VkClearValue* clear, VkImageLayout layout /*= VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL*/)
+{
+    VkRenderingAttachmentInfo color_attachment{};
+    color_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    color_attachment.pNext = nullptr;
+
+    color_attachment.imageView = view;
+    color_attachment.imageLayout = layout;
+    color_attachment.loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    if (clear) {
+        color_attachment.clearValue = *clear;
+    }
+
+    return color_attachment;
+}
+
+VkRenderingAttachmentInfo vkinit::depth_attachment_info(
+    VkImageView view, VkImageLayout layout /*= VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL*/)
+{
+    VkRenderingAttachmentInfo depth_attachment{};
+    depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    depth_attachment.pNext = nullptr;
+
+    depth_attachment.imageView = view;
+    depth_attachment.imageLayout = layout;
+    depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth_attachment.clearValue.depthStencil.depth = 0.f;
+
+    return depth_attachment;
+}
+
+VkRenderingInfo vkinit::rendering_info(VkExtent2D renderExtent, VkRenderingAttachmentInfo* colorAttachment,
+    VkRenderingAttachmentInfo* depthAttachment)
+{
+    VkRenderingInfo render_info{};
+    render_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    render_info.pNext = nullptr;
+
+    render_info.renderArea = VkRect2D{ VkOffset2D { 0, 0 }, renderExtent };
+    render_info.layerCount = 1;
+    render_info.colorAttachmentCount = 1;
+    render_info.pColorAttachments = colorAttachment;
+    render_info.pDepthAttachment = depthAttachment;
+    render_info.pStencilAttachment = nullptr;
+
+    return render_info;
+}

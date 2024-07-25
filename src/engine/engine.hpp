@@ -129,7 +129,8 @@ private:
 
 	// Render functions
 	void render();
-	void render_scene(VkCommandBuffer cmd);
+	void render_background(VkCommandBuffer cmd);
+	void render_geometry(VkCommandBuffer cmd);
 };
 
 
