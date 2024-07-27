@@ -27,12 +27,16 @@ public:
     void set_shaders(VkShaderModule vertex_shader, VkShaderModule fragment_shader, const char* entry);
     void set_input_topology(VkPrimitiveTopology topology);
     void set_polygon_mode(VkPolygonMode mode);
-    void set_cull_mode(VkCullModeFlags cullMode, VkFrontFace frontFace);
+    void set_cull_mode(VkCullModeFlags cull_mode, VkFrontFace front_face);
     void set_multisampling_none();
     void disable_blending();
+    void enable_blending_additive();
+    void enable_blending_alphablend();
     void set_color_attachment_format(VkFormat format);
     void set_depth_format(VkFormat format);
     void disable_depthtest();
+    void enable_depthtest(bool depth_write_enable, VkCompareOp op);
+
 
 private:
 

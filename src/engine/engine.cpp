@@ -14,10 +14,13 @@
 #define VMA_IMPLEMENTATION
 #include <vk_mem_alloc.h>
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/transform.hpp>
+
 // dear imgui
-//#include <imgui.h>
-//#include <backends/imgui_impl_sdl2.h>
-//#include <backends/imgui_impl_vulkan.h>
+#include <imgui.h>
+#include <backends/imgui_impl_sdl2.h>
+#include <backends/imgui_impl_vulkan.h>
 
 #include<thread>
 #include <chrono>
@@ -41,7 +44,7 @@ Engine::Engine()
     // We initialize SDL and create a window with it. 
     SDL_Init(SDL_INIT_VIDEO);
 
-    SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_VULKAN);
+    SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
 
     _window = SDL_CreateWindow(
         TITLE,
@@ -66,6 +69,8 @@ Engine::Engine()
 
     init_data();
 
+    init_imgui();
+
     _is_initialized = true;
 }
 
@@ -75,8 +80,14 @@ Engine::~Engine()
 
     if (_is_initialized) {
 
-        //make sure the gpu has stopped doing its things
+        // make sure the gpu has stopped doing its things
         vkDeviceWaitIdle(_device);
+
+        // destroy meshes
+        for (auto& mesh : test_meshes) {
+            destroy_buffer(mesh->mesh_buffers.index_buffer);
+            destroy_buffer(mesh->mesh_buffers.vertex_buffer);
+        }
 
         _main_deletion_queue.flush();
 
@@ -105,35 +116,7 @@ Engine::~Engine()
 
 void Engine::init_data()
 {
-    std::array<Vertex, 4> rect_vertices;
-
-    rect_vertices[0].position = { 0.5,-0.5, 0 };
-    rect_vertices[1].position = { 0.5,0.5, 0 };
-    rect_vertices[2].position = { -0.5,-0.5, 0 };
-    rect_vertices[3].position = { -0.5,0.5, 0 };
-
-    rect_vertices[0].color = { 0,0, 0,1 };
-    rect_vertices[1].color = { 0.5,0.5,0.5 ,1 };
-    rect_vertices[2].color = { 1,0, 0,1 };
-    rect_vertices[3].color = { 0,1, 0,1 };
-
-    std::array<uint32_t, 6> rect_indices;
-
-    rect_indices[0] = 0;
-    rect_indices[1] = 1;
-    rect_indices[2] = 2;
-
-    rect_indices[3] = 2;
-    rect_indices[4] = 1;
-    rect_indices[5] = 3;
-
-    rectangle = upload_mesh(rect_indices, rect_vertices);
-
-    //delete the rectangle data on engine shutdown
-    _main_deletion_queue.push_function([&]() {
-        destroy_buffer(rectangle.index_buffer);
-        destroy_buffer(rectangle.vertex_buffer);
-        });
+    test_meshes = load_glTF_meshes(this, "..\\..\\assets\\basicmesh.glb").value();
 }
 
 void Engine::init_vulkan()
@@ -239,7 +222,7 @@ void Engine::init_swapchain()
     create_swapchain(_window_extent.width, _window_extent.height);
 
     // match extent with window extent
-    VkExtent3D drawImageExtent = {
+    VkExtent3D draw_image_extent = {
         _window_extent.width,
         _window_extent.height,
         1
@@ -247,7 +230,8 @@ void Engine::init_swapchain()
 
     //hardcoding the draw format to 32 bit float
     _draw_image.image_format = VK_FORMAT_R16G16B16A16_SFLOAT;
-    _draw_image.image_extent = drawImageExtent;
+    _depth_image.image_format = VK_FORMAT_D32_SFLOAT;
+    _draw_image.image_extent = draw_image_extent;
 
     VkImageUsageFlags draw_image_usages{};
     draw_image_usages |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
@@ -255,7 +239,11 @@ void Engine::init_swapchain()
     draw_image_usages |= VK_IMAGE_USAGE_STORAGE_BIT;
     draw_image_usages |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
-    VkImageCreateInfo rimg_info = vkinit::image_create_info(_draw_image.image_format, draw_image_usages, drawImageExtent);
+    VkImageUsageFlags depth_image_usages{};
+    depth_image_usages |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+
+    VkImageCreateInfo rimg_info = vkinit::image_create_info(_draw_image.image_format, draw_image_usages, draw_image_extent);
+    VkImageCreateInfo dimg_info = vkinit::image_create_info(_depth_image.image_format, depth_image_usages, draw_image_extent);
 
     // allocate it from local gpu memory
     VmaAllocationCreateInfo rimg_allocinfo = {};
@@ -264,16 +252,22 @@ void Engine::init_swapchain()
 
     //allocate and create the image
     vmaCreateImage(_allocator, &rimg_info, &rimg_allocinfo, &_draw_image.image, &_draw_image.allocation, nullptr);
+    vmaCreateImage(_allocator, &dimg_info, &rimg_allocinfo, &_depth_image.image, &_depth_image.allocation, nullptr);
 
     //build a image-view for the draw image to use for rendering
     VkImageViewCreateInfo rview_info = vkinit::imageview_create_info(_draw_image.image_format, _draw_image.image, VK_IMAGE_ASPECT_COLOR_BIT);
+    VkImageViewCreateInfo dview_info = vkinit::imageview_create_info(_depth_image.image_format, _depth_image.image, VK_IMAGE_ASPECT_DEPTH_BIT);
 
     VK_CHECK(vkCreateImageView(_device, &rview_info, nullptr, &_draw_image.image_view));
+    VK_CHECK(vkCreateImageView(_device, &dview_info, nullptr, &_depth_image.image_view));
 
     //add to deletion queues
     _main_deletion_queue.push_function([=]() {
         vkDestroyImageView(_device, _draw_image.image_view, nullptr);
         vmaDestroyImage(_allocator, _draw_image.image, _draw_image.allocation);
+
+        vkDestroyImageView(_device, _depth_image.image_view, nullptr);
+        vmaDestroyImage(_allocator, _depth_image.image, _depth_image.allocation);
         });
 }
 
@@ -383,6 +377,58 @@ void Engine::init_pipelines()
     init_mesh_pipeline();
 }
 
+void Engine::init_imgui()
+{
+    // descriptor pool for dear imgui
+    VkDescriptorPoolSize pool_sizes[] =
+    {
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 },
+    };
+    VkDescriptorPoolCreateInfo pool_info = {};
+    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool_info.maxSets = 1;
+    pool_info.poolSizeCount = (uint32_t)IM_ARRAYSIZE(pool_sizes);
+    pool_info.pPoolSizes = pool_sizes;
+
+    VkDescriptorPool imgui_pool;
+    VK_CHECK(vkCreateDescriptorPool(_device, &pool_info, nullptr, &imgui_pool));
+
+    // initialize core structures of imgui
+    ImGui::CreateContext();
+
+    // initialize imgui for sdl
+    ImGui_ImplSDL2_InitForVulkan(_window);
+
+    // initialize imgui for vulkan
+    ImGui_ImplVulkan_InitInfo init_info = {};
+    init_info.Instance = _instance;
+    init_info.PhysicalDevice = _physical_device;
+    init_info.Device = _device;
+    init_info.Queue = _graphics_queue;
+    init_info.DescriptorPool = imgui_pool;
+    init_info.MinImageCount = 3;
+    init_info.ImageCount = 3;
+    init_info.UseDynamicRendering = true;
+
+    // dynamic rendering parameters for imgui
+    init_info.PipelineRenderingCreateInfo = { .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
+    init_info.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+    init_info.PipelineRenderingCreateInfo.pColorAttachmentFormats = &_swapchain_image_format;
+
+    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+
+    ImGui_ImplVulkan_Init(&init_info);
+
+    ImGui_ImplVulkan_CreateFontsTexture();
+
+    // destroy imgui structures
+    _main_deletion_queue.push_function([=]() {
+        ImGui_ImplVulkan_Shutdown();
+        vkDestroyDescriptorPool(_device, imgui_pool, nullptr);
+        });
+}
+
 void Engine::init_mesh_pipeline()
 {
     VkShaderModule grid_frag_shader;
@@ -427,13 +473,19 @@ void Engine::init_mesh_pipeline()
     //no multisampling
     pipeline_builder.set_multisampling_none();
     //no blending
-    pipeline_builder.disable_blending();
+    //pipeline_builder.disable_blending();
+    pipeline_builder.enable_blending_alphablend();
 
-    pipeline_builder.disable_depthtest();
+    //pipeline_builder.disable_depthtest();
+    pipeline_builder.enable_depthtest(true, VK_COMPARE_OP_GREATER_OR_EQUAL);
 
     //connect the image format we will draw into, from draw image
     pipeline_builder.set_color_attachment_format(_draw_image.image_format);
     pipeline_builder.set_depth_format(VK_FORMAT_UNDEFINED);
+
+    //connect the image format we will draw into, from draw image
+    pipeline_builder.set_color_attachment_format(_draw_image.image_format);
+    pipeline_builder.set_depth_format(_depth_image.image_format);
 
     //finally build the pipeline
     _mesh_pipeline = pipeline_builder.build_pipeline(_device);
@@ -578,6 +630,7 @@ void Engine::render()
     render_background(cmd);
 
     vkutil::transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    vkutil::transition_image(cmd, _depth_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
     render_geometry(cmd);
 
@@ -588,8 +641,14 @@ void Engine::render()
     // copy draw image to swapchain image
     vkutil::copy_image_to_image(cmd, _draw_image.image, _swapchain_images[swapchain_image_index], _draw_extent, _swapchain_extent);
 
+    // set swapchain image layout to Attachment Optimal so we can draw it
+    vkutil::transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+    //draw imgui into the swapchain image
+    render_imgui(cmd, _swapchain_image_views[swapchain_image_index]);
+
     // transition swapchain image format to present format
-    vkutil::transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    vkutil::transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
     VK_CHECK(vkEndCommandBuffer(cmd));
 
@@ -629,30 +688,20 @@ void Engine::render_background(VkCommandBuffer cmd)
     VkImageSubresourceRange clear_range = vkinit::image_subresource_range(VK_IMAGE_ASPECT_COLOR_BIT);
 
     vkCmdClearColorImage(cmd, _draw_image.image, VK_IMAGE_LAYOUT_GENERAL, &clear_value, 1, &clear_range);
-    
-
-    /*
-    // bind the gradient drawing compute pipeline
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _grid_pipeline);
-
-    // bind the descriptor set containing the draw image for the compute pipeline
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _grid_pipeline_layout, 0, 1, &_draw_image_descriptors, 0, nullptr);
-
-    // execute the compute pipeline dispatch. We are using 16x16 workgroup size so we need to divide by it
-    vkCmdDispatch(cmd, std::ceil(_draw_extent.width / 16.0), std::ceil(_draw_extent.height / 16.0), 1);
-    */
 }
 
 void Engine::render_geometry(VkCommandBuffer cmd)
 {
     //begin a render pass  connected to our draw image
     VkRenderingAttachmentInfo color_attachment = vkinit::attachment_info(_draw_image.image_view, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    VkRenderingAttachmentInfo depth_attachment = vkinit::depth_attachment_info(_depth_image.image_view, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
     
-    VkRenderingInfo render_info = vkinit::rendering_info(_draw_extent, &color_attachment, nullptr);
+    VkRenderingInfo render_info = vkinit::rendering_info(_draw_extent, &color_attachment, &depth_attachment);
+
     vkCmdBeginRendering(cmd, &render_info);
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline);
-    
+
     //set dynamic viewport and scissor
     VkViewport viewport = {};
     viewport.x = 0;
@@ -672,16 +721,34 @@ void Engine::render_geometry(VkCommandBuffer cmd)
 
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline);
-
     GPUDrawPushConstants push_constants;
-    push_constants.world_matrix = glm::mat4{ 1.f };
-    push_constants.vertex_buffer = rectangle.vertex_buffer_address;
+    glm::mat4 view = glm::translate(glm::vec3{ 0,0,-5 });
+    // camera projection
+    glm::mat4 projection = glm::perspective(glm::radians(70.f), (float)_draw_extent.width / (float)_draw_extent.height, 10000.f, 0.1f);
+
+    // invert the Y direction on projection matrix so that we are more similar
+    // to opengl and gltf axis
+    projection[1][1] *= -1;
+    push_constants.world_matrix = projection * view;
+
+    push_constants.vertex_buffer = test_meshes[2]->mesh_buffers.vertex_buffer_address;
 
     vkCmdPushConstants(cmd, _mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &push_constants);
-    vkCmdBindIndexBuffer(cmd, rectangle.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+    vkCmdBindIndexBuffer(cmd, test_meshes[2]->mesh_buffers.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 
-    vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
+    vkCmdDrawIndexed(cmd, test_meshes[2]->surfaces[0].count, 1, test_meshes[2]->surfaces[0].start_index, 0, 0);
+
+    vkCmdEndRendering(cmd);
+}
+
+void Engine::render_imgui(VkCommandBuffer cmd, VkImageView targetImageView)
+{
+    VkRenderingAttachmentInfo color_attachment = vkinit::attachment_info(targetImageView, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    VkRenderingInfo render_info = vkinit::rendering_info(_swapchain_extent, &color_attachment, nullptr);
+
+    vkCmdBeginRendering(cmd, &render_info);
+
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
 
     vkCmdEndRendering(cmd);
 }
@@ -716,15 +783,29 @@ void Engine::run()
                     quit = true;
                 }
             }
+
+            // process SDL event in imgui
+            ImGui_ImplSDL2_ProcessEvent(&e);
         }
 
         // Do not render if minimized
         if (_stop_rendering) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
         }
-        else {
-            render();
-        }
+
+        // imgui new frame
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplSDL2_NewFrame();
+        ImGui::NewFrame();
+
+        // some imgui UI to test
+        ImGui::ShowDemoWindow();
+
+        // make imgui calculate internal draw structures
+        ImGui::Render();
+
+        render();
 
     }
 } 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "descriptors.hpp"
+#include "loader.hpp"
 
 #include <deque>
 #include <functional>
@@ -51,6 +52,8 @@ public:
 	Engine();
 	~Engine();
 
+	GPUMeshBuffers upload_mesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
+
 	void run();
 
 private:
@@ -91,6 +94,7 @@ private:
 
 	// Draw Resources
 	AllocatedImage _draw_image;
+	AllocatedImage _depth_image;
 	VkExtent2D _draw_extent;
 
 	// Descriptors
@@ -116,8 +120,6 @@ private:
 
 	void destroy_buffer(const AllocatedBuffer& buffer);
 
-	GPUMeshBuffers upload_mesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
-
 	// Initialization functions
 	void init_vulkan();
 
@@ -133,12 +135,15 @@ private:
 
 	void init_pipelines();
 
+	void init_imgui();
+
 	void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
 
 	// Render functions
 	void render();
 	void render_background(VkCommandBuffer cmd);
 	void render_geometry(VkCommandBuffer cmd);
+	void render_imgui(VkCommandBuffer cmd, VkImageView target_image_view);
 
 	// Temp
 	VkPipelineLayout _mesh_pipeline_layout;
@@ -149,6 +154,8 @@ private:
 	void init_mesh_pipeline();
 
 	void init_data();
+
+	std::vector<std::shared_ptr<MeshAsset>> test_meshes;
 
 };
 

@@ -18,6 +18,9 @@ add_executable (engine
 	engine/images.cpp
 	engine/images.hpp
 
+	engine/loader.cpp
+	engine/loader.hpp
+
   	
 )
 
@@ -35,6 +38,7 @@ target_link_libraries(engine
 	SDL2::SDL2 
 	vkbootstrap 
 	imgui
+	fastgltf::fastgltf
 )
 
 target_precompile_headers(engine PUBLIC <optional> <vector> <memory> <string> <vector> <unordered_map> <glm/mat4x4.hpp> <glm/vec4.hpp> <vulkan/vulkan.h> <fmt/core.h> <fmt/color.h>)

@@ -204,7 +204,7 @@ VkRenderingAttachmentInfo vkinit::attachment_info(
 VkRenderingAttachmentInfo vkinit::depth_attachment_info(
     VkImageView view, VkImageLayout layout /*= VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL*/)
 {
-    VkRenderingAttachmentInfo depth_attachment{};
+    VkRenderingAttachmentInfo depth_attachment {};
     depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
     depth_attachment.pNext = nullptr;
 

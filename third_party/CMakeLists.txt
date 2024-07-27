@@ -8,6 +8,7 @@ add_library(stb INTERFACE)
 add_subdirectory(fmt-11.0.2 EXCLUDE_FROM_ALL fmt)
 add_subdirectory(SDL2-2.30.5 EXCLUDE_FROM_ALL SDL)
 add_subdirectory(vma-3.1.0 EXCLUDE_FROM_ALL vma)
+add_subdirectory(fastgltf-0.7.2 EXCLUDE_FROM_ALL fastgltf)
 
 # VkBootstrap
 target_sources(vkbootstrap PRIVATE 
