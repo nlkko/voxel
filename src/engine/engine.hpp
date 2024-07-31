@@ -44,6 +44,7 @@ struct FrameData {
 	VkFence _render_fence;
 
 	DeletionQueue _deletion_queue;
+	DescriptorAllocatorGrowable _frame_descriptors;
 };
 
 class Engine
@@ -64,6 +65,7 @@ private:
 	
 	bool _is_initialized{ false };
 	bool _stop_rendering{ false };
+	bool _resize_requested{ false };
 	int _frame_number{ 0 };
 
 	DeletionQueue _main_deletion_queue;
@@ -97,6 +99,9 @@ private:
 	AllocatedImage _depth_image;
 	VkExtent2D _draw_extent;
 
+	GPUSceneData scene_data;
+	VkDescriptorSetLayout _gpu_scene_data_descriptor_layout;
+
 	// Descriptors
 	DescriptorAllocator global_descriptor_allocator;
 
@@ -125,11 +130,15 @@ private:
 
 	void create_swapchain(uint32_t width, uint32_t height);
 	void destroy_swapchain();
+	void resize_swapchain();
 	void init_swapchain();
 
 	void init_command_pool();
 
-	void init_sync_structures();
+	void init_sync_objects();
+
+	void create_sync_objects(); 
+	void destroy_sync_objects();
 
 	void init_descriptors();
 

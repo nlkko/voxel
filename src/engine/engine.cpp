@@ -34,6 +34,7 @@
 // * Use several command pools
 // * DeleteQueue via vulkan handles
 // * Create a thread for deleting/reusing buffers as well execute upload
+// * Add proper resizing
 
 constexpr bool use_validation_layers_ = true;
 
@@ -44,7 +45,7 @@ Engine::Engine()
     // We initialize SDL and create a window with it. 
     SDL_Init(SDL_INIT_VIDEO);
 
-    SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+    SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_VULKAN);
 
     _window = SDL_CreateWindow(
         TITLE,
@@ -61,7 +62,7 @@ Engine::Engine()
 
     init_command_pool();
 
-    init_sync_structures();
+    init_sync_objects();
 
     init_descriptors();
 
@@ -89,17 +90,17 @@ Engine::~Engine()
             destroy_buffer(mesh->mesh_buffers.vertex_buffer);
         }
 
-        _main_deletion_queue.flush();
-
         for (int i = 0; i < FRAME_OVERLAP; i++) {
 
             vkDestroyCommandPool(_device, _frames[i]._command_pool, nullptr);
 
-            //destroy sync objects
-            vkDestroyFence(_device, _frames[i]._render_fence, nullptr);
-            vkDestroySemaphore(_device, _frames[i]._render_semaphore, nullptr);
-            vkDestroySemaphore(_device, _frames[i]._swapchain_semaphore, nullptr);
+            _frames[i]._deletion_queue.flush();
         }
+
+        _main_deletion_queue.flush();
+
+        //destroy sync objects
+        destroy_sync_objects();
 
         destroy_swapchain();
 
@@ -217,6 +218,25 @@ void Engine::destroy_swapchain()
     }
 }
 
+void Engine::resize_swapchain()
+{
+    vkDeviceWaitIdle(_device);
+
+    destroy_swapchain();
+    destroy_sync_objects();
+
+    int w, h;
+    SDL_GetWindowSize(_window, &w, &h);
+
+    create_swapchain(w, h);
+    create_sync_objects();
+
+    _window_extent.width = w;
+    _window_extent.height = h;
+
+    _resize_requested = false;
+}
+
 void Engine::init_swapchain()
 {
     create_swapchain(_window_extent.width, _window_extent.height);
@@ -304,7 +324,7 @@ void Engine::init_command_pool()
         });
 }
 
-void Engine::init_sync_structures()
+void Engine::init_sync_objects()
 {
     // create syncronization structures
 
@@ -312,20 +332,35 @@ void Engine::init_sync_structures()
     // 2 Semapphores to synchronize with swapchain
 
     // Fence starts signalled so we can wait on the first frame
-
-    VkFenceCreateInfo fenceCreateInfo = vkinit::fence_create_info(VK_FENCE_CREATE_SIGNALED_BIT);
-    VkSemaphoreCreateInfo semaphoreCreateInfo = vkinit::semaphore_create_info();
-
-    for (int i = 0; i < FRAME_OVERLAP; i++) {
-        VK_CHECK(vkCreateFence(_device, &fenceCreateInfo, nullptr, &_frames[i]._render_fence));
-
-        VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &_frames[i]._swapchain_semaphore));
-        VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &_frames[i]._render_semaphore));
-    }
+    create_sync_objects();
 
     // immediate submit fence
-    VK_CHECK(vkCreateFence(_device, &fenceCreateInfo, nullptr, &_imm_fence));
+    VkFenceCreateInfo fence_create_info = vkinit::fence_create_info(VK_FENCE_CREATE_SIGNALED_BIT);
+    VK_CHECK(vkCreateFence(_device, &fence_create_info, nullptr, &_imm_fence));
     _main_deletion_queue.push_function([=]() { vkDestroyFence(_device, _imm_fence, nullptr); });
+}
+
+void Engine::create_sync_objects()
+{
+    VkFenceCreateInfo fence_create_info = vkinit::fence_create_info(VK_FENCE_CREATE_SIGNALED_BIT);
+    VkSemaphoreCreateInfo semaphore_create_info = vkinit::semaphore_create_info();
+
+
+    for (int i = 0; i < FRAME_OVERLAP; i++) {
+        VK_CHECK(vkCreateFence(_device, &fence_create_info, nullptr, &_frames[i]._render_fence));
+
+        VK_CHECK(vkCreateSemaphore(_device, &semaphore_create_info, nullptr, &_frames[i]._swapchain_semaphore));
+        VK_CHECK(vkCreateSemaphore(_device, &semaphore_create_info, nullptr, &_frames[i]._render_semaphore));
+    }
+}
+
+void Engine::destroy_sync_objects()
+{
+    for (int i = 0; i < FRAME_OVERLAP; i++) {
+        vkDestroyFence(_device, _frames[i]._render_fence, nullptr);
+        vkDestroySemaphore(_device, _frames[i]._render_semaphore, nullptr);
+        vkDestroySemaphore(_device, _frames[i]._swapchain_semaphore, nullptr);
+    }
 }
 
 void Engine::init_descriptors()
@@ -345,31 +380,43 @@ void Engine::init_descriptors()
         _draw_image_descriptor_layout = builder.build(_device, VK_SHADER_STAGE_COMPUTE_BIT);
     }
 
+    {
+        DescriptorLayoutBuilder builder;
+        builder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+        _gpu_scene_data_descriptor_layout = builder.build(_device, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+    }
+
     // allocate a descriptor set for draw image
     _draw_image_descriptors = global_descriptor_allocator.allocate(_device, _draw_image_descriptor_layout);
 
-    VkDescriptorImageInfo img_info{};
-    img_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    img_info.imageView = _draw_image.image_view;
+    DescriptorWriter writer;
+    writer.write_image(0, _draw_image.image_view, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
 
-    VkWriteDescriptorSet draw_image_write = {};
-    draw_image_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    draw_image_write.pNext = nullptr;
-
-    draw_image_write.dstBinding = 0;
-    draw_image_write.dstSet = _draw_image_descriptors;
-    draw_image_write.descriptorCount = 1;
-    draw_image_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    draw_image_write.pImageInfo = &img_info;
-
-    // update the descriptor set with the image info
-    vkUpdateDescriptorSets(_device, 1, &draw_image_write, 0, nullptr);
+    writer.update_set(_device, _draw_image_descriptors);
 
     // clean up descriptor allocator and new layout
     _main_deletion_queue.push_function([&]() {
         global_descriptor_allocator.destroy_pool(_device);
         vkDestroyDescriptorSetLayout(_device, _draw_image_descriptor_layout, nullptr);
+        vkDestroyDescriptorSetLayout(_device, _gpu_scene_data_descriptor_layout, nullptr);
         });
+
+    for (int i = 0; i < FRAME_OVERLAP; i++) {
+        // create a descriptor pool
+        std::vector<DescriptorAllocatorGrowable::PoolSizeRatio> frame_sizes = {
+            { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3 },
+            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 },
+            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 },
+            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4 },
+        };
+
+        _frames[i]._frame_descriptors = DescriptorAllocatorGrowable{};
+        _frames[i]._frame_descriptors.init(_device, 1000, frame_sizes);
+
+        _main_deletion_queue.push_function([&, i]() {
+            _frames[i]._frame_descriptors.destroy_pools(_device);
+            });
+    }
 }
 
 void Engine::init_pipelines()
@@ -606,12 +653,19 @@ void Engine::render()
     VK_CHECK(vkWaitForFences(_device, 1, &get_current_frame()._render_fence, true, 1000000000));
 
     get_current_frame()._deletion_queue.flush();
+    get_current_frame()._frame_descriptors.clear_pools(_device);
 
     VK_CHECK(vkResetFences(_device, 1, &get_current_frame()._render_fence));
 
     // request image from the swapchain
     uint32_t swapchain_image_index;
-    VK_CHECK(vkAcquireNextImageKHR(_device, _swapchain, 1000000000, get_current_frame()._swapchain_semaphore, nullptr, &swapchain_image_index));
+
+    VkResult e = vkAcquireNextImageKHR(_device, _swapchain, 1000000000, get_current_frame()._swapchain_semaphore, nullptr, &swapchain_image_index);
+
+    if (e == VK_ERROR_OUT_OF_DATE_KHR || e == VK_SUBOPTIMAL_KHR) {
+        _resize_requested = true;
+        return;
+    }
 
     // reset command buffer
     VkCommandBuffer cmd = get_current_frame()._main_command_buffer;
@@ -675,7 +729,10 @@ void Engine::render()
 
     present_info.pImageIndices = &swapchain_image_index;
 
-    VK_CHECK(vkQueuePresentKHR(_graphics_queue, &present_info));
+    VkResult present_result = vkQueuePresentKHR(_graphics_queue, &present_info);
+    if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR) {
+        _resize_requested = true;
+    }
 
     _frame_number++;
 }
@@ -721,29 +778,32 @@ void Engine::render_geometry(VkCommandBuffer cmd)
 
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-    GPUDrawPushConstants push_constants;
-    glm::mat4 view = glm::translate(glm::vec3{ 0,0,-5 });
-    // camera projection
-    glm::mat4 projection = glm::perspective(glm::radians(70.f), (float)_draw_extent.width / (float)_draw_extent.height, 10000.f, 0.1f);
+    //allocate a new uniform buffer for the scene data
+    AllocatedBuffer gpu_scene_data_buffer = create_buffer(sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
-    // invert the Y direction on projection matrix so that we are more similar
-    // to opengl and gltf axis
-    projection[1][1] *= -1;
-    push_constants.world_matrix = projection * view;
+    //add it to the deletion queue of this frame so it gets deleted once its been used
+    get_current_frame()._deletion_queue.push_function([=, this]() {
+        destroy_buffer(gpu_scene_data_buffer);
+        });
 
-    push_constants.vertex_buffer = test_meshes[2]->mesh_buffers.vertex_buffer_address;
+    //write the buffer
+    GPUSceneData* scene_uniform_data = (GPUSceneData*)gpu_scene_data_buffer.allocation->GetMappedData();
+    *scene_uniform_data = scene_data;
 
-    vkCmdPushConstants(cmd, _mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &push_constants);
-    vkCmdBindIndexBuffer(cmd, test_meshes[2]->mesh_buffers.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+    //create a descriptor set that binds that buffer and update it
+    VkDescriptorSet global_descriptor = get_current_frame()._frame_descriptors.allocate(_device, _gpu_scene_data_descriptor_layout);
 
-    vkCmdDrawIndexed(cmd, test_meshes[2]->surfaces[0].count, 1, test_meshes[2]->surfaces[0].start_index, 0, 0);
+
+    DescriptorWriter writer;
+    writer.write_buffer(0, gpu_scene_data_buffer.buffer, sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    writer.update_set(_device, global_descriptor);
 
     vkCmdEndRendering(cmd);
 }
 
-void Engine::render_imgui(VkCommandBuffer cmd, VkImageView targetImageView)
+void Engine::render_imgui(VkCommandBuffer cmd, VkImageView target_image_view)
 {
-    VkRenderingAttachmentInfo color_attachment = vkinit::attachment_info(targetImageView, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    VkRenderingAttachmentInfo color_attachment = vkinit::attachment_info(target_image_view, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     VkRenderingInfo render_info = vkinit::rendering_info(_swapchain_extent, &color_attachment, nullptr);
 
     vkCmdBeginRendering(cmd, &render_info);
@@ -792,6 +852,11 @@ void Engine::run()
         if (_stop_rendering) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
+        }
+
+        if (_resize_requested) {
+            fmt::print(fg(fmt::color::wheat), "Resize Requested\n");
+            resize_swapchain();
         }
 
         // imgui new frame
