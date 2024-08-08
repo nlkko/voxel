@@ -154,17 +154,28 @@ private:
 	void render_geometry(VkCommandBuffer cmd);
 	void render_imgui(VkCommandBuffer cmd, VkImageView target_image_view);
 
+	// Textures
+	AllocatedImage create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
+	AllocatedImage create_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
+	void destroy_image(const AllocatedImage& img);
+
 	// Temp
 	VkPipelineLayout _mesh_pipeline_layout;
 	VkPipeline _mesh_pipeline;
-
-	GPUMeshBuffers rectangle;
 
 	void init_mesh_pipeline();
 
 	void init_data();
 
 	std::vector<std::shared_ptr<MeshAsset>> test_meshes;
+
+	AllocatedImage _error_checkerboard_image;
+
+	VkSampler _default_sampler_linear;
+	VkSampler _default_sampler_nearest;
+
+	VkDescriptorSetLayout _single_image_descriptor_layout;
+
 
 };
 
