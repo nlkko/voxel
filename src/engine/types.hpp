@@ -47,3 +47,19 @@ struct GPUSceneData {
     glm::mat4 proj;
     glm::mat4 viewproj;
 };
+
+enum class MaterialPass :uint8_t {
+    MainColor,
+    Transparent,
+    Other
+};
+struct MaterialPipeline {
+    VkPipeline pipeline;
+    VkPipelineLayout layout;
+};
+
+struct MaterialInstance {
+    MaterialPipeline* pipeline;
+    VkDescriptorSet material_set;
+    MaterialPass pass_type;
+};

@@ -8,14 +8,6 @@
 #include <vk_mem_alloc.h>
 
 
-struct AllocatedImage {
-	VkImage image;
-	VkImageView image_view;
-	VmaAllocation allocation;
-	VkExtent3D image_extent;
-	VkFormat image_format;
-};
-
 struct DeletionQueue
 {
 	std::deque<std::function<void()>> deletors;
@@ -34,8 +26,6 @@ struct DeletionQueue
 	}
 };
 
-constexpr unsigned int FRAME_OVERLAP = 2;
-
 struct FrameData {
 	VkCommandPool _command_pool;
 	VkCommandBuffer _main_command_buffer;
@@ -47,11 +37,72 @@ struct FrameData {
 	DescriptorAllocatorGrowable _frame_descriptors;
 };
 
+struct GLTFMetallic_Roughness {
+	MaterialPipeline opaque_pipeline;
+	MaterialPipeline transparent_pipeline;
+
+	VkDescriptorSetLayout material_layout;
+
+	struct MaterialConstants {
+		glm::vec4 color_factors;
+		glm::vec4 metal_rough_factors;
+		//padding, we need it anyway for uniform buffers
+		glm::vec4 extra[14];
+	};
+
+	struct MaterialResources {
+		AllocatedImage color_image;
+		VkSampler color_sampler;
+		AllocatedImage metal_rough_image;
+		VkSampler metal_rough_sampler;
+		VkBuffer data_buffer;
+		uint32_t data_buffer_offset;
+	};
+
+	DescriptorWriter writer;
+
+	void build_pipelines(Engine* engine);
+	void clear_resources(VkDevice device);
+
+	MaterialInstance write_material(VkDevice device, MaterialPass pass, const MaterialResources& resources, DescriptorAllocatorGrowable& descriptorAllocator);
+};
+
+constexpr unsigned int FRAME_OVERLAP = 2;
+
+struct AllocatedImage {
+	VkImage image;
+	VkImageView image_view;
+	VmaAllocation allocation;
+	VkExtent3D image_extent;
+	VkFormat image_format;
+};
+
+struct RenderObject {
+	uint32_t index_count;
+	uint32_t first_index;
+	VkBuffer index_buffer;
+
+	MaterialInstance* material;
+
+	glm::mat4 transform;
+	VkDeviceAddress vertexBufferAddress;
+};
+
 class Engine
 {
 public:
 	Engine();
 	~Engine();
+
+	// Initialization
+	VkDevice _device; // Vulkan logical device for commands
+
+	// Descriptors
+	VkDescriptorSetLayout _gpu_scene_data_descriptor_layout;
+
+	// Draw Resources
+	AllocatedImage _draw_image;
+	AllocatedImage _depth_image;
 
 	GPUMeshBuffers upload_mesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
 
@@ -76,7 +127,7 @@ private:
 	VkInstance _instance; // Vulkan library handle
 	VkDebugUtilsMessengerEXT _debug_messenger; // Vulkan debug output handle
 	VkPhysicalDevice _physical_device; // GPU chosen as the default device
-	VkDevice _device; // Vulkan logical device for commands
+	
 	VkSurfaceKHR _surface; // Vulkan window surface
 
 	// Swapchain
@@ -95,12 +146,10 @@ private:
 	uint32_t _graphics_queue_family;
 
 	// Draw Resources
-	AllocatedImage _draw_image;
-	AllocatedImage _depth_image;
 	VkExtent2D _draw_extent;
 
 	GPUSceneData scene_data;
-	VkDescriptorSetLayout _gpu_scene_data_descriptor_layout;
+	
 
 	// Descriptors
 	DescriptorAllocator global_descriptor_allocator;
